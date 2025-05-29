@@ -1,3 +1,4 @@
+# %%
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -5,11 +6,12 @@ from google.auth.transport.requests import Request
 from datetime import datetime, timedelta, timezone
 import os
 import logging
+from typing import List, Optional
 
 import json
 
 
-
+# %%
 # Set up logging configuration so it can display logs in the terminal or interactive mode
 logging.basicConfig(
     level=logging.INFO,
@@ -17,7 +19,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
-
+# %%
 def create_service(client_secret_file, api_name, api_version, *scopes, prefix=''):
     CLIENT_SECRET_FILE = client_secret_file
     API_SERVICE_NAME = api_name
@@ -60,7 +62,7 @@ def create_service(client_secret_file, api_name, api_version, *scopes, prefix=''
         os.remove(os.path.join(working_dir, token_dir, token_file))
         return None
     
-
+# %%
 client_secret = ''
 
 def construct_google_calendar_service(client_secret):
@@ -83,8 +85,8 @@ def construct_google_calendar_service(client_secret):
 calendar_service = construct_google_calendar_service(client_secret)
 
 # Default calendar ID (can be changed later to a specific user's)
-CALENDAR_ID = 'primary'
-
+CALENDAR_ID = "primary"
+# %%
 def create_calendar_event(event):
     """
     Create a new event in the user's Google Calendar.
@@ -124,7 +126,7 @@ def create_calendar_event(event):
     }
 
     created_event = calendar_service.events().insert(
-        calenderId=CALENDAR_ID,
+        calendarId="primary",  # ✅ FIXED typo here
         body=event_body,
         sendNotifications=True,
         sendUpdates='all'
@@ -132,8 +134,8 @@ def create_calendar_event(event):
 
     logger.info(f"Created event: {created_event}")
 
-    return created_event
-
+    return created_event #structured info to be sent to the frontend
+# %%
 def update_calendar_event(event_id: str, updated_event):
     """
     Update an existing event in the user's Google Calendar.
@@ -186,8 +188,41 @@ def update_calendar_event(event_id: str, updated_event):
         logger.info(f"Updated event: {updated_event}")
 
 
-        return updated_event
+        return updated_event #structured info to be sent to the frontend
+
     except Exception as e:
         logger.error(f"An error occurred: {e}")
         return None
+# %%   
+class Participant:
+    def __init__(self, name:str, email:str):
+        self.name = name
+        self.email = email
     
+class EventDetails:
+    def __init__(self, name:str, date:datetime, duration_minutes:int, participants:List[Participant],  location: Optional[str]):
+        self.name = name
+        self.date = date
+        self.duration_minutes = duration_minutes
+        self.participants = participants
+        self.location = location
+
+event_date = datetime.fromisoformat("2025-05-30T14:00:00")
+
+participants = [
+    Participant(name="Alice", email="uniqueifeyinwa@gmail.com"),
+    Participant(name="Bob", email="oguguofrank246@gmail.com")
+]
+
+event_create = EventDetails(
+    name="Team Meeting",
+    date=event_date,
+    duration_minutes=60,
+    participants=participants,
+    location=None
+)
+
+results = create_calendar_event(event_create)
+
+logger.info(results)
+# %%
