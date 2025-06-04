@@ -3,6 +3,7 @@ from pydantic import BaseModel, field_validator, Field
 from typing import  Optional, Literal
 from datetime import datetime
 
+
 # --------------------------------------------------------------
 # Step 1: Define the data models for each stage
 # --------------------------------------------------------------
@@ -25,10 +26,11 @@ class EventDetails(BaseModel):
     """Second LLM call: Parse Specific event details"""
 
     name: str = Field(description="The name of the event.")
-    date: str = Field(description="Date and time of the event. Use ISO 8601 to format this value.")
+    date: datetime  = Field(description="Date and time of the event. Use ISO 8601 to format this value.")
+    description: str = Field(default=None, description="Description of the event.")
     duration_minutes: int = Field(description="Expected duration in minutes")
     participants: list[Participant] = Field(description="List of participants with name and email.")
-    location: Optional[str] = Field(description="Location of the event (whether zoom or physical).")
+    location: Optional[str] = Field(default=None, description="Location of the event (whether zoom or physical).")
 
     @field_validator('participants')
     @classmethod
@@ -36,6 +38,7 @@ class EventDetails(BaseModel):
         if not participants:
             raise ValueError("At least one participant is required.")
         return participants
+
 
 # %%
 class EventConfirmation(BaseModel):
@@ -51,7 +54,7 @@ class EventConfirmation(BaseModel):
 class CalendarRequestType(BaseModel):
     """Router LLM call: Determine the type of calendar request"""
 
-    request_type: Literal["new_event", "modify_event", "other"] = Field(
+    request_type: Literal["new_event", "modify_event", "delete_event", "list_events", "reschedule_event", "find_an_event",  "other"] = Field(
         description="The type of calendar request being made."
     )
     confidence_score : float = Field(description="The confidence score of the event between 0 and 1.")

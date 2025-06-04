@@ -7,6 +7,7 @@ import logging
 from validators import EventConfirmation, CalendarRequestType, EventDetails, EventConfirmation, CalendarResponse, ModifyEventDetails, CalendarValidation, SecurityCheck
 import asyncio
 import nest_asyncio
+from calendar_api import create_calendar_event
 
 nest_asyncio.apply()
 # %%
@@ -81,7 +82,7 @@ def determine_calendar_request_type(user_input: str) -> CalendarRequestType:
         messages=[
             {
                 "role": "system",
-                "content": "You are a helpful AI agent. Your job is to classify user intents into categories like new_event, modify an existing event, etc."
+                "content": "You are a helpful AI agent. Your job is to classify user intents into categories like new_event, modify an existing event, delete an event, list events, reschedule an event, find a specific event, etc."
             },
             {
                 "role": "user",
@@ -94,7 +95,7 @@ def determine_calendar_request_type(user_input: str) -> CalendarRequestType:
     logger.info(f"Calendar request type determined successfully: {result.request_type}, confidence: {result.confidence_score:.2f}")
     return result
 # %%
-def handle_new_event(description: str) -> CalendarResponse:
+def handle_new_event(description: str, access_token: str) -> CalendarResponse:
     """Second LLM call: to Parse(Extract) Specific event details."""
     logger.info("starting Parsing event details...")
 
@@ -107,7 +108,7 @@ def handle_new_event(description: str) -> CalendarResponse:
         messages=[
             {
                 "role": "system",
-                "content": f"{date_context} Extract detailed event information. When dates reference 'next Tuesday' or similar relative dates, use this current date as reference.",
+                "content": f"{date_context} Extract detailed event information. When dates reference 'next Tuesday' or similar relative dates, use this current date as reference and add other missing even details where necessary like description .",
             },
             {
                 "role": "user",
@@ -121,12 +122,19 @@ def handle_new_event(description: str) -> CalendarResponse:
     logger.info(f"Parsed event details - name: {details.name}, date: {details.date}, duration: {details.duration_minutes} minutes, participants: {details.participants}, location: {details.location}")
     logger.info(f"New event: {details.model_dump_json(indent=2)}")
 
-    # Generate response to send to user
-    return CalendarResponse(
-        sucess=True,
-        confirmation_message=f"Create new event '{details.name}' for {details.date} with {', '.join([people.name for people in details.participants])}. in {details.location} for {details.duration_minutes} minutes",
-        calender_link=f"calendar://new?event={details.name}",
-    )
+    # call the create event function to create the event in the calendar
+    try:
+        create_event = asyncio.run(create_calendar_event(details, access_token))
+        logger.info(f"Event created successfully: {create_event}")
+    except Exception as e:
+        logger.error(f"Failed to create event: {e}")
+        return CalendarResponse(
+            success=False,
+            confirmation_message="Failed to create the event. Please try again.",
+            calender_link=None
+        )
+    
+    return create_event
 
 # %%
 def handle_modify_event(description: str) -> CalendarResponse:
@@ -165,7 +173,7 @@ def handle_modify_event(description: str) -> CalendarResponse:
     )
 
 # %%
-def process_calendar_request(user_input: str) -> Optional[CalendarResponse]:
+def process_calendar_request(user_input: str, access_token: str) -> Optional[CalendarResponse]:
     """Main Function for implenting the routing workflow"""
     logger.info("Processing calendar request...")
 
@@ -179,7 +187,7 @@ def process_calendar_request(user_input: str) -> Optional[CalendarResponse]:
     
     # Route to appropriate handler
     if route_result.request_type == "new_event":
-        return handle_new_event(route_result.description)
+        return handle_new_event(route_result.description, access_token)
     elif route_result.request_type == "modify_event":
         return handle_modify_event(route_result.description)
     else:
@@ -188,7 +196,7 @@ def process_calendar_request(user_input: str) -> Optional[CalendarResponse]:
     
 # %%
 
-async def validate_request(user_input: str) -> Optional[CalendarResponse]:
+async def validate_request(user_input: str, access_token: str) -> Optional[CalendarResponse]:
     """ RUN validation checks in parallel(at once) to check if the user input is a valid calendar event and secure"""
     calendar_event_check, security_check = await asyncio.gather(
         validate_calendar_request(user_input),
@@ -201,7 +209,7 @@ async def validate_request(user_input: str) -> Optional[CalendarResponse]:
     )
 
     if is_valid:
-        return process_calendar_request(user_input)
+        return process_calendar_request(user_input, access_token)
 
     else:
         logger.warning(
@@ -215,9 +223,69 @@ async def validate_request(user_input: str) -> Optional[CalendarResponse]:
             confirmation_message="Invalid request. Please try again.",
             calender_link=None,
         )
-    
 
-    
+# %%
+def handle_delete_event(description: str) -> CalendarResponse:
+    """Second LLM call: to Parse(Extract) Specific event details."""
+    logger.info("processing event deletion request...")
+    #Get deletion Details
+    completion = client.beta.chat.completions.parse(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": "Extract detailed event information to delete. When dates reference 'next Tuesday' or similar relative dates, use this current date as reference.",
+            },
+            {
+                "role": "user",
+                "content": description,
+            }
+        ],
+        response_format=EventDetails,
+    )
+    details = completion.choices[0].message.parsed
+
+    logger.info(f"Parsed event details - name: {details.name}, date: {details.date}, duration: {details.duration_minutes} minutes, participants: {details.participants}, location: {details.location}")
+    logger.info(f"Delete event: {details.model_dump_json(indent=2)}")
+
+    # Generate response to send to user
+    return CalendarResponse(
+        sucess=True,
+        confirmation_message=f"Delete event '{details.name}' for {details.date} with {', '.join([people.name for people in details.participants])}. in {details.location} for {details.duration_minutes} minutes",
+        calender_link=f"calendar://delete?event={details.name}",
+    )
+
+# %%
+def handle_list_events(description: str) -> CalendarResponse:
+    """Second LLM call: to Parse(Extract) Specific event details."""
+    logger.info("processing event listing request...")
+
+    #Get listing Details
+    completion = client.beta.chat.completions.parse(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": "Extract detailed event information to list events. With the calendar name and date. When dates reference similar relative dates, use this current date as reference.",
+            },
+            {
+                "role": "user",
+                "content": description,
+            }
+        ],
+        response_format=EventDetails,
+    )
+    details = completion.choices[0].message.parsed
+
+    logger.info(f"Parsed event details - name: {details.name}, date: {details.date}, duration: {details.duration_minutes} minutes, participants: {details.participants}, location: {details.location}")
+    logger.info(f"List events: {details.model_dump_json(indent=2)}")
+
+    # Generate response to send to user
+    return CalendarResponse(
+        sucess=True,
+        confirmation_message=f"List events for {details.date} with {', '.join([people.name for people in details.participants])}. in {details.location} for {details.duration_minutes} minutes",
+        calender_link=f"calendar://list?event={details.name}",
+    )
 
 # --------------------------------------------------------------
 # Step 3: Test with new event
@@ -225,14 +293,12 @@ async def validate_request(user_input: str) -> Optional[CalendarResponse]:
 
 # %%
 
-new_even_input = "Let's schedule a team meeting next Tuesday at 2pm with Alice alicemickal@gmail.com and Bob bobmars@gmail.com"
+# new_even_input = "Let's schedule a team meeting next Tuesday at 2pm with Alice alicemickal@gmail.com and Bob bobmars@gmail.com"
 
-result = asyncio.run(validate_request(new_even_input))
+# result = asyncio.run(validate_request(new_even_input))
 
-if result:
-    print(f"Response: {result.model_dump_json(indent=2)}")
-
-
+# if result:
+#     print(f"Response: {result.model_dump_json(indent=2)}")
 
 
 
@@ -250,39 +316,7 @@ if result:
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    
 
 
     # Process the request based on the determined type
